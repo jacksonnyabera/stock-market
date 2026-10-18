@@ -9,14 +9,16 @@ type StockInfo = {
   color: string;
 };
 
+
 type StockQuote = {
   symbol: string;
   price: number;
   change: number;
-  changePercent: string | number;
+  changePercent: number;
   latestTradingDay?: string;
   dataSource?: string;
 };
+
 
 type ApiResponse = Partial<StockQuote> & {
   error?: string;
@@ -390,8 +392,8 @@ export default function Home() {
                           >
                             {selectedQuote.change >= 0 ? "+" : ""}
                             {formatMoney(selectedQuote.change)} (
-                            {selectedQuote.changePercent >= 0 ? "+" : ""}
-                            {selectedQuote.changePercent.toFixed(2)}%)
+                            {Number(selectedQuote.changePercent) >= 0 ? "+" : ""}
+                            {Number(selectedQuote.changePercent).toFixed(2)}%)
                           </p>
                       )}
                     </div>
@@ -542,7 +544,7 @@ export default function Home() {
                                   }`}
                               >
                                 {quote
-                                    ? `${quote.changePercent >= 0 ? "+" : ""}${quote.changePercent.toFixed(2)}%`
+                                    ? `${Number(quote.changePercent) >= 0 ? "+" : ""}${Number(quote.changePercent).toFixed(2)}%`
                                     : loading
                                         ? "Loading…"
                                         : "Unavailable"}

@@ -44,18 +44,35 @@ export async function GET(request: NextRequest) {
 
         const data = await response.json();
 
+
         if (data["Error Message"] || data["Note"] || data["Information"]) {
+            const providerMessage =
+                data["Note"] ||
+                data["Information"] ||
+                data["Error Message"] ||
+                "Historical data is temporarily unavailable.";
+
+            const isRateLimited =
+                /rate limit|requests per day|call frequency|premium endpoint/i.test(
+                    String(providerMessage)
+                );
+
             return NextResponse.json(
                 {
-                    error:
-                        data["Note"] ||
-                        data["Information"] ||
-                        data["Error Message"] ||
-                        "Historical data is temporarily unavailable.",
+                    error: isRateLimited
+                        ? "Historical data provider rate limit reached. Please try again later."
+                        : String(providerMessage),
+                    rateLimited: isRateLimited,
                 },
-                { status: 502 }
+                {
+                    status: isRateLimited ? 429 : 502,
+                    headers: {
+                        "Cache-Control": "no-store",
+                    },
+                }
             );
         }
+
 
         const timeSeries = data["Time Series (Daily)"];
 

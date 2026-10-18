@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
     CartesianGrid,
     Line,
@@ -17,12 +17,18 @@ type PricePoint = {
 };
 
 type HistoryResponse = {
-    symbol: string;
+    symbol?: string;
     prices?: PricePoint[];
     error?: string;
+    rateLimited?: boolean;
 };
 
 const SYMBOLS = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN"];
+const CACHE_DURATION = 60 * 60 * 1000;
+const historyCache = new Map<
+    string,
+    { prices: PricePoint[]; fetchedAt: number }
+>();
 
 export default function StockHistoryChart() {
     const [symbol, setSymbol] = useState("AAPL");
@@ -35,9 +41,17 @@ export default function StockHistoryChart() {
         const controller = new AbortController();
 
         async function loadHistory() {
+            const cached = historyCache.get(symbol);
+
+            if (cached && Date.now() - cached.fetchedAt < CACHE_DURATION) {
+                setPrices(cached.prices);
+                setError("");
+                setLoading(false);
+                return;
+            }
+
             setLoading(true);
             setError("");
-            setPrices([]);
 
             try {
                 const response = await fetch(
@@ -48,14 +62,38 @@ export default function StockHistoryChart() {
                 const data: HistoryResponse = await response.json();
 
                 if (!response.ok) {
-                    throw new Error(data.error || "Unable to load historical prices.");
+                    throw new Error(
+                        data.error ||
+                        (response.status === 429
+                            ? "Historical data limit reached. Please try again later."
+                            : "Unable to load historical prices.")
+                    );
                 }
 
                 if (!Array.isArray(data.prices) || data.prices.length === 0) {
                     throw new Error("No historical prices are available.");
                 }
 
-                setPrices(data.prices);
+                const validPrices = data.prices
+                    .filter(
+                        (item) =>
+                            typeof item.date === "string" &&
+                            Number.isFinite(item.close) &&
+                            item.close > 0
+                    )
+                    .sort((a, b) => a.date.localeCompare(b.date));
+
+                if (validPrices.length === 0) {
+                    throw new Error("The provider returned no valid prices.");
+                }
+
+                historyCache.set(symbol, {
+                    prices: validPrices,
+                    fetchedAt: Date.now(),
+                });
+
+                setPrices(validPrices);
+                setError("");
             } catch (err) {
                 if (err instanceof Error && err.name !== "AbortError") {
                     setError(err.message);
@@ -67,13 +105,36 @@ export default function StockHistoryChart() {
             }
         }
 
-        loadHistory();
+        void loadHistory();
 
         return () => controller.abort();
     }, [symbol]);
 
-    const first = prices[0];
-    const latest = prices[prices.length - 1];
+    const displayedPrices = useMemo(() => {
+        const daysByRange: Record<string, number> = {
+            "1W": 7,
+            "1M": 30,
+            "3M": 90,
+        };
+
+        const days = daysByRange[range] ?? 30;
+
+        if (prices.length === 0) return [];
+
+        const latestDate = new Date(`${prices[prices.length - 1].date}T00:00:00`);
+        const cutoff = new Date(latestDate);
+        cutoff.setDate(cutoff.getDate() - days);
+
+        const filtered = prices.filter(
+            (point) => new Date(`${point.date}T00:00:00`) >= cutoff
+        );
+
+        // Retain at least one point if the available history is limited.
+        return filtered.length > 0 ? filtered : prices.slice(-1);
+    }, [prices, range]);
+
+    const first = displayedPrices[0];
+    const latest = displayedPrices[displayedPrices.length - 1];
     const change = first && latest ? latest.close - first.close : 0;
     const changePercent =
         first && first.close !== 0 ? (change / first.close) * 100 : 0;
@@ -103,13 +164,13 @@ export default function StockHistoryChart() {
                     ))}
                 </select>
 
-
                 <div className="flex items-center gap-1 rounded-lg bg-[#1e222d] p-1">
                     {["1W", "1M", "3M"].map((item) => (
                         <button
                             key={item}
                             type="button"
                             onClick={() => setRange(item)}
+                            aria-pressed={range === item}
                             className={`rounded-md px-3 py-2 text-xs font-medium transition ${
                                 range === item
                                     ? "bg-[#2962ff] text-white"
@@ -120,7 +181,6 @@ export default function StockHistoryChart() {
                         </button>
                     ))}
                 </div>
-
             </div>
 
             {loading && (
@@ -150,15 +210,15 @@ export default function StockHistoryChart() {
                             {changePercent >= 0 ? "+" : ""}
                             {changePercent.toFixed(2)}%)
                             <span className="ml-2 text-slate-500">
-                over displayed period
-              </span>
+                                over displayed period
+                            </span>
                         </p>
                     </div>
 
                     <div className="h-[340px] w-full px-2 pb-4">
                         <ResponsiveContainer width="100%" height="100%">
                             <LineChart
-                                data={prices}
+                                data={displayedPrices}
                                 margin={{ top: 12, right: 20, left: 4, bottom: 4 }}
                             >
                                 <CartesianGrid
